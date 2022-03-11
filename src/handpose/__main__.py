@@ -1,8 +1,9 @@
 import logging
 import ctypes
 import asyncio
-from pydear import imgui as ImGui
 from mediapipe.python.solutions import hands as mp_hands
+from pydear import imgui as ImGui
+from pydear import glo
 
 logger = logging.getLogger(__name__)
 
@@ -12,14 +13,44 @@ FILE_DIALOG = 'ModalFileDialog'
 class HandLandmark:
     def __init__(self) -> None:
         self.landmark = None
+        self.clear_color = (ctypes.c_float * 4)(0.1, 0.2, 0.3, 1)
+        self.fbo_manager = glo.FboRenderer()
 
-    def show(self, p_open: ctypes.Array):
+    def show_table(self, p_open: ctypes.Array):
         if ImGui.Begin('hand', p_open):
             if self.landmark:
-                for e, mark in zip(mp_hands.HandLandmark, self.landmark):
-                    ImGui.TextUnformatted(
-                        f'{e.name}, {mark.x}, {mark.y}, {mark.z}')
-                    pass
+                flags = (
+                    ImGui.ImGuiTableFlags_.BordersV
+                    | ImGui.ImGuiTableFlags_.BordersOuterH
+                    | ImGui.ImGuiTableFlags_.Resizable
+                    | ImGui.ImGuiTableFlags_.RowBg
+                    | ImGui.ImGuiTableFlags_.NoBordersInBody
+                )
+
+                if ImGui.BeginTable("tiles", 4, flags):
+                    # header
+                    # ImGui.TableSetupScrollFreeze(0, 1); // Make top row always visible
+                    ImGui.TableSetupColumn('index')
+                    ImGui.TableSetupColumn('x')
+                    ImGui.TableSetupColumn('y')
+                    ImGui.TableSetupColumn('z')
+                    ImGui.TableHeadersRow()
+
+                    # body
+                    for i, p in enumerate(self.landmark):
+                        ImGui.TableNextRow()
+                        # index
+                        ImGui.TableNextColumn()
+                        ImGui.TextUnformatted(f'{i}')
+                        #
+                        ImGui.TableNextColumn()
+                        ImGui.TextUnformatted(f'{p.x:.2f}')
+                        ImGui.TableNextColumn()
+                        ImGui.TextUnformatted(f'{p.y:.2f}')
+                        ImGui.TableNextColumn()
+                        ImGui.TextUnformatted(f'{p.z:.2f}')
+
+                    ImGui.EndTable()
             # ImGui.SliderFloat4('clear color', app.clear_color, 0, 1)
             # ImGui.ColorPicker4('color', app.clear_color)
         ImGui.End()
@@ -47,6 +78,24 @@ class HandLandmark:
                     for hand_landmarks in results.multi_hand_landmarks:
                         self.landmark = hand_landmarks.landmark
 
+    def show_view(self, p_open):
+        ImGui.PushStyleVar_2(ImGui.ImGuiStyleVar_.WindowPadding, (0, 0))
+        if ImGui.Begin("render target", p_open,
+                       ImGui.ImGuiWindowFlags_.NoScrollbar |
+                       ImGui.ImGuiWindowFlags_.NoScrollWithMouse):
+            w, h = ImGui.GetContentRegionAvail()
+            texture = self.fbo_manager.clear(
+                int(w), int(h), self.clear_color)
+
+            # TODO: render
+
+            if texture:
+                ImGui.BeginChild("_image_")
+                ImGui.Image(texture, (w, h), (0, 1), (1, 0))
+                ImGui.EndChild()
+        ImGui.End()
+        ImGui.PopStyleVar()
+
 
 def main():
     logging.basicConfig(level=logging.DEBUG)
@@ -60,7 +109,11 @@ def main():
     hand_landmark = HandLandmark()
 
     views = [
-        dockspace.Dock('handlandmark', hand_landmark.show,
+        dockspace.Dock('metrics', ImGui.ShowMetricsWindow,
+                       (ctypes.c_bool * 1)(True)),
+        dockspace.Dock('landmarks', hand_landmark.show_table,
+                       (ctypes.c_bool * 1)(True)),
+        dockspace.Dock('view', hand_landmark.show_view,
                        (ctypes.c_bool * 1)(True)),
     ]
 
