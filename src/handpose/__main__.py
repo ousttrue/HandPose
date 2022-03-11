@@ -1,6 +1,7 @@
 import logging
 import ctypes
 import asyncio
+from OpenGL import GL
 from mediapipe.python.solutions import hands as mp_hands
 from pydear import imgui as ImGui
 from pydear import glo
@@ -9,12 +10,38 @@ logger = logging.getLogger(__name__)
 
 FILE_DIALOG = 'ModalFileDialog'
 
+VS = '''#version 330
+in vec2 vPos;
+void main()
+{
+    gl_Position = vec4(vPos, 0.0, 1.0);
+}
+'''
+
+FS = '''#version 330
+out vec4 FragColor;
+void main()
+{
+    FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+}
+'''
+
+
+class Vertex(ctypes.Structure):
+    _fields_ = [
+        ('x', ctypes.c_float),
+        ('y', ctypes.c_float),
+    ]
+
 
 class HandLandmark:
     def __init__(self) -> None:
         self.landmark = None
         self.clear_color = (ctypes.c_float * 4)(0.1, 0.2, 0.3, 1)
         self.fbo_manager = glo.FboRenderer()
+        self.is_initialized = False
+        self.vertices = (Vertex * 21)()
+        self.is_updated = False
 
     def show_table(self, p_open: ctypes.Array):
         if ImGui.Begin('hand', p_open):
@@ -78,6 +105,11 @@ class HandLandmark:
                     for hand_landmarks in results.multi_hand_landmarks:
                         self.landmark = hand_landmarks.landmark
 
+                        # update vertices
+                        for i, v in enumerate(self.landmark):
+                            self.vertices[i] = Vertex(v.x, v.y)
+                        self.is_updated = True
+
     def show_view(self, p_open):
         ImGui.PushStyleVar_2(ImGui.ImGuiStyleVar_.WindowPadding, (0, 0))
         if ImGui.Begin("render target", p_open,
@@ -87,7 +119,7 @@ class HandLandmark:
             texture = self.fbo_manager.clear(
                 int(w), int(h), self.clear_color)
 
-            # TODO: render
+            self.render()
 
             if texture:
                 ImGui.BeginChild("_image_")
@@ -96,9 +128,37 @@ class HandLandmark:
         ImGui.End()
         ImGui.PopStyleVar()
 
+    def initialize(self) -> None:
+        self.shader = glo.Shader.load(VS, FS)
+        if not self.shader:
+            return
+        vbo = glo.Vbo()
+        self.vao = glo.Vao(
+            vbo, glo.VertexLayout.create_list(self.shader.program))
+        self.vao.vbo.set_vertices(self.vertices, is_dynamic=True)
+
+    def render(self):
+        if not self.is_initialized:
+            self.initialize()
+            self.is_initialized = True
+
+        if self.is_updated:
+            self.vao.vbo.set_vertices(self.vertices, is_dynamic=True)
+            self.is_updated = False
+
+        if not self.shader:
+            return
+        with self.shader:
+            self.vao.draw(21, topology=GL.GL_POINTS)
+
 
 def main():
     logging.basicConfig(level=logging.DEBUG)
+    from pydear.utils.loghandler import ImGuiLogHandler
+    log_handler = ImGuiLogHandler()
+    log_handler.setFormatter(logging.Formatter(
+        '%(name)s:%(lineno)s[%(levelname)s]%(message)s'))
+    log_handler.register_root()
 
     from pydear.utils import glfw_app
     app = glfw_app.GlfwApp('hello_docking')
@@ -115,6 +175,7 @@ def main():
                        (ctypes.c_bool * 1)(True)),
         dockspace.Dock('view', hand_landmark.show_view,
                        (ctypes.c_bool * 1)(True)),
+        dockspace.Dock('log', log_handler.draw, (ctypes.c_bool * 1)(True)),
     ]
 
     gui = dockspace.DockingGui(app.loop, docks=views)
