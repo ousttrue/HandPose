@@ -1,7 +1,9 @@
+from typing import Optional
 import logging
 import ctypes
 import asyncio
 from OpenGL import GL
+import numpy
 from mediapipe.python.solutions import hands as mp_hands
 from pydear import imgui as ImGui
 from pydear import glo
@@ -42,6 +44,8 @@ class HandLandmark:
         self.is_initialized = False
         self.vertices = (Vertex * 21)()
         self.is_updated = False
+
+        self.capture_texture: Optional[glo.Texture] = None
 
     def show_table(self, p_open: ctypes.Array):
         if ImGui.Begin('hand', p_open):
@@ -99,6 +103,8 @@ class HandLandmark:
                 # pass by reference.
                 image.flags.writeable = False
                 image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                self.update_capture_texture(image)
+
                 results = hands.process(image)
 
                 if results.multi_hand_landmarks:
@@ -109,6 +115,14 @@ class HandLandmark:
                         for i, v in enumerate(self.landmark):
                             self.vertices[i] = Vertex(v.x, v.y)
                         self.is_updated = True
+
+    def update_capture_texture(self, image: numpy.ndarray):
+        h, w = image.shape[:2]
+        if not self.capture_texture or self.capture_texture.width != w or self.capture_texture.height != h:
+            self.capture_texture = glo.Texture(
+                w, h, image, pixel_type=GL.GL_RGB)
+        else:
+            self.capture_texture.update(0, 0, w, h, image)
 
     def show_view(self, p_open):
         ImGui.PushStyleVar_2(ImGui.ImGuiStyleVar_.WindowPadding, (0, 0))
@@ -127,6 +141,16 @@ class HandLandmark:
                 ImGui.EndChild()
         ImGui.End()
         ImGui.PopStyleVar()
+
+    def show_texture(self, p_open):
+        if ImGui.Begin("capture", p_open):
+            if self.capture_texture:
+                ImGui.BeginChild("_capture_")
+                ImGui.Image(ctypes.c_void_p(int(self.capture_texture.handle)), (self.capture_texture.width,
+                            self.capture_texture.height), (0, 0), (1, 1))
+                ImGui.EndChild()
+
+        ImGui.End()
 
     def initialize(self) -> None:
         self.shader = glo.Shader.load(VS, FS)
@@ -169,6 +193,8 @@ def main():
     hand_landmark = HandLandmark()
 
     views = [
+        dockspace.Dock('texture', hand_landmark.show_texture,
+                       (ctypes.c_bool * 1)(True)),
         dockspace.Dock('metrics', ImGui.ShowMetricsWindow,
                        (ctypes.c_bool * 1)(True)),
         dockspace.Dock('landmarks', hand_landmark.show_table,
